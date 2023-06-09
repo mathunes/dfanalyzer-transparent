@@ -1,4 +1,13 @@
 import argparse
+from dfa_lib_python.dataflow import Dataflow
+from dfa_lib_python.transformation import Transformation
+from dfa_lib_python.attribute import Attribute
+from dfa_lib_python.attribute_type import AttributeType
+from dfa_lib_python.set import Set
+from dfa_lib_python.set_type import SetType
+from dfa_lib_python.task import Task
+from dfa_lib_python.dataset import DataSet
+from dfa_lib_python.element import Element
 import os
 import subprocess
 import shutil
@@ -15,8 +24,8 @@ def is_script_python(script_path):
         return False
     return True
 
-def get_script_content(script_path):
-    with open(script_path, "r") as file:
+def get_file_content(file_path):
+    with open(file_path, "r") as file:
         return file.read()
 
 def get_functions_in_script(script_content):
@@ -28,6 +37,9 @@ def get_functions_in_script(script_content):
             functions_names.append(script_line.replace('def', '').split('(')[0].strip())
     
     return functions_names
+
+def get_script_name(script_path):
+    return os.path.basename(script_path).replace(".py", "")
 
 def create_script_copy(script_path):
     script_copy_path = script_path.replace('.py', '-dfa-copy.py')
@@ -59,7 +71,7 @@ def add_dfa_write_prov_control_file_function(indentation):
 
 
 def instrument_copy_script(script_copy_path):
-    script_content = get_script_content(script_copy_path)
+    script_content = get_file_content(script_copy_path)
     script_lines = remove_script_empty_lines(script_content.split('\n'))
     indentation = ' ' * get_indentation(script_content)
     function_name = ''
@@ -81,7 +93,7 @@ def instrument_copy_script(script_copy_path):
                     function_parameters_with_value = ''
 
 
-                file.write(indentation + f'dfa_write_prov_control_file(f\'CALL FUNCTION {function_name} WITH FOLLOWING PARAMETERS: {function_parameters_with_value} \') \n')
+                file.write(indentation + f'dfa_write_prov_control_file(f\'>>> {function_name} : {function_parameters_with_value} \') \n')
             
             if i < len(script_lines) - 1 and 'return ' in script_lines[i + 1]:
                 return_ref = script_lines[i + 1].replace('return ', '').strip()
@@ -89,10 +101,63 @@ def instrument_copy_script(script_copy_path):
                 if isinstance(return_ref, list):
                     return_ref = ' '.join(map(str, return_ref))
                 
-                file.write(indentation + f'dfa_write_prov_control_file(\'RETURN FUNCTION {function_name} WITH FOLLOWING VALUE: \' + str({return_ref})) \n')
+                file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} : \' + str({return_ref})) \n')
 
             if i < len(script_lines) - 1 and not script_lines[i + 1].startswith(indentation) and not 'return ' in script_lines[i]:
-                file.write(indentation + f'dfa_write_prov_control_file(\'RETURN FUNCTION {function_name} \') \n')
+                file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} \') \n')
+
+# ADD FUNCTIONS TO READ CONTROL TEMP FILE AND STORE PROV DATA
+
+def get_prospective_prov(script_name, prov_control_path):
+    prov_control_content = get_file_content(prov_control_path)
+    
+    prov_control_lines = prov_control_content.split('\n')
+
+    dataflow_tag = script_name
+
+    dflow = Dataflow(dataflow_tag)
+
+    function_called_count = 0
+
+    for prov_control_line in prov_control_lines:
+        if prov_control_line.startswith(">>>"):
+            function_name = prov_control_line.split(":")[0].replace(">>>", "").strip()
+
+            attributes = prov_control_line.split(":")[1].strip().split(";")
+
+            attributes = [attribute for attribute in attributes if attribute != ""]
+
+            i_attribute_list = []
+
+            for attribute in attributes:
+                i_attribute_list.append(Attribute(attribute.split(" = ")[0].strip().upper(), AttributeType.TEXT))
+
+            transf_input = Set("i_" + function_name, SetType.INPUT, i_attribute_list)
+
+            if function_called_count > 0:
+                transf_aux = Transformation("call_function_" + function_name)
+                
+                transf_output.set_type(SetType.INPUT)
+                transf_output.dependency = transf._tag
+                transf_input.set_type(SetType.OUTPUT)
+
+                transf_aux.set_sets([transf_output, transf_input])
+
+                dflow.add_transformation(transf_aux)
+
+            transf_input.set_type(SetType.INPUT)
+
+            transf_output = Set("o_" + function_name, SetType.OUTPUT, [Attribute('RETURNED_DATA', AttributeType.TEXT)])
+
+            transf = Transformation(function_name)
+
+            transf.set_sets([transf_input, transf_output])
+            
+            dflow.add_transformation(transf)
+
+            function_called_count += 1
+    
+    dflow.save()
 
 
 
@@ -110,14 +175,19 @@ def main(arguments):
 
     if is_script_path_valid(script_path):
         if (is_script_python(script_path)):
-            functions_names = get_functions_in_script(get_script_content(script_path))
+            script_name = get_script_name(script_path)
+
+            functions_names = get_functions_in_script(get_file_content(script_path))
 
             script_copy_path = create_script_copy(script_path)
-            create_prov_control_file(script_path)
+            prov_control_path = create_prov_control_file(script_path)
 
             instrument_copy_script(script_copy_path)
 
             run_python_script(script_copy_path)
+
+            get_prospective_prov(script_name, prov_control_path)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a Python script.")
