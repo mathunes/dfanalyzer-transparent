@@ -104,24 +104,10 @@ def instrument_copy_script(script_copy_path):
             if i < len(script_lines) - 1 and not script_lines[i + 1].startswith(indentation) and not 'return ' in script_lines[i]:
                 file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} : \') \n')
 
-def create_call_transformation(dflow, transf_output, transf_input, transf2, i):
-
-    transf = Transformation('call_' + str(i))
-
-    transf_output.set_type = SetType.INPUT
-    # transf_output.dependency = transf2._tag
-
-    # transf_input.set_type = SetType.OUTPUT
-
-    transf.set_sets([transf_output, transf_input])
-
-    return transf
-
-
 def get_prospective_prov(script_name, prov_control_path):
     prov_control_content = get_file_content(prov_control_path)
     
-    prov_control_lines = remove_script_empty_lines(prov_control_content.split('\n'))
+    prov_control_lines = prov_control_content.split('\n')
 
     dataflow_tag = script_name
 
@@ -129,10 +115,7 @@ def get_prospective_prov(script_name, prov_control_path):
 
     function_called_count = 0
 
-    for i in range(len(prov_control_lines)):
-
-        prov_control_line = prov_control_lines[i]
-
+    for prov_control_line in prov_control_lines:
         if prov_control_line.startswith(">>>"):
             function_name = prov_control_line.split(":")[0].replace(">>>", "").strip()
 
@@ -145,30 +128,30 @@ def get_prospective_prov(script_name, prov_control_path):
             for attribute in attributes:
                 i_attribute_list.append(Attribute(attribute.split(" = ")[0].strip().upper(), AttributeType.TEXT))
 
-            transf_input = Set("i_set_" + function_name, SetType.INPUT, i_attribute_list)
+            transf_input = Set("i_" + function_name, SetType.INPUT, i_attribute_list)
 
             if function_called_count > 0:
-                dflow.add_transformation(create_call_transformation(dflow, transf_output, transf_input, transf, function_called_count))
-
-            if prov_control_lines[i+1].startswith(">>>"):
-                transf_output = Set("inside_" + function_name, SetType.OUTPUT, [])
-
-                transf = Transformation(function_name)
-
-                transf.set_sets([transf_input, transf_output])
+                transf_aux = Transformation("call_function_" + function_name)
                 
-                dflow.add_transformation(transf)
+                transf_output.set_type(SetType.INPUT)
+                transf_output.dependency = transf._tag
+                transf_input.set_type(SetType.OUTPUT)
 
-        else:
-            transf_output = Set("o_set_" + function_name, SetType.OUTPUT, [])
+                transf_aux.set_sets([transf_output, transf_input])
+
+                dflow.add_transformation(transf_aux)
+
+            transf_input.set_type(SetType.INPUT)
+
+            transf_output = Set("o_" + function_name, SetType.OUTPUT, [Attribute('RETURNED_DATA', AttributeType.TEXT)])
 
             transf = Transformation(function_name)
 
             transf.set_sets([transf_input, transf_output])
             
             dflow.add_transformation(transf)
-        
-        function_called_count += 1
+
+            function_called_count += 1
     
     dflow.save()
 
