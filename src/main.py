@@ -68,8 +68,6 @@ def remove_script_empty_lines(script_lines):
 def add_dfa_write_prov_control_file_function(indentation):
     return f"def dfa_write_prov_control_file(log):\n{indentation}with open('dfa-prov-control-file.txt', 'a') as file:\n{indentation + indentation}file.write(log + '\\n')"
 
-
-
 def instrument_copy_script(script_copy_path):
     script_content = get_file_content(script_copy_path)
     script_lines = remove_script_empty_lines(script_content.split('\n'))
@@ -104,9 +102,7 @@ def instrument_copy_script(script_copy_path):
                 file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} : \' + str({return_ref})) \n')
 
             if i < len(script_lines) - 1 and not script_lines[i + 1].startswith(indentation) and not 'return ' in script_lines[i]:
-                file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} \') \n')
-
-# ADD FUNCTIONS TO READ CONTROL TEMP FILE AND STORE PROV DATA
+                file.write(indentation + f'dfa_write_prov_control_file(\'<<< {function_name} : \') \n')
 
 def get_prospective_prov(script_name, prov_control_path):
     prov_control_content = get_file_content(prov_control_path)
@@ -159,8 +155,46 @@ def get_prospective_prov(script_name, prov_control_path):
     
     dflow.save()
 
+def get_retrospective_prov(script_name, prov_control_path, functions_names):
+    prov_control_content = get_file_content(prov_control_path)
+    
+    prov_control_lines = prov_control_content.split('\n')
 
+    dataflow_tag = script_name
 
+    tasks = {}
+
+    for i, prov_control_line in enumerate(prov_control_lines, start=1):
+        if prov_control_line.startswith(">>>"):
+            function_name = prov_control_line.split(":")[0].replace(">>>", "").strip()
+            tasks[function_name] = Task(i, dataflow_tag, function_name)
+
+    for prov_control_line in prov_control_lines:
+        if prov_control_line.startswith(">>>"):
+            function_name = prov_control_line.split(":")[0].replace(">>>", "").strip()
+
+            attributes_values = prov_control_line.split(":")[1].strip().split(";")
+
+            attributes_values = [attribute_value for attribute_value in attributes_values if attribute_value != ""]
+
+            i_attributes_values_list = []
+
+            for attribute_value in attributes_values:
+                i_attributes_values_list.append(attribute_value.split(" = ")[1].strip())
+
+            task_input = DataSet("i_" + function_name, [Element(i_attributes_values_list)])
+            tasks[function_name].add_dataset(task_input)
+            tasks[function_name].begin()
+
+        elif prov_control_line.startswith("<<<"):
+            function_name = prov_control_line.split(":")[0].replace("<<<", "").strip()
+
+            returned_data = prov_control_line.split(":")[1].strip().replace("'", "\\'")
+
+            task_output = DataSet("o_" + function_name, [Element([returned_data])])
+
+            tasks[function_name].add_dataset(task_output)
+            tasks[function_name].end()
 
 def run_python_script(script_path):
     try:
@@ -187,6 +221,8 @@ def main(arguments):
             run_python_script(script_copy_path)
 
             get_prospective_prov(script_name, prov_control_path)
+
+            get_retrospective_prov(script_name, prov_control_path, functions_names)
 
 
 if __name__ == "__main__":
