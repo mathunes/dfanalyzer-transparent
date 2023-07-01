@@ -41,10 +41,21 @@ def get_functions_in_script(script_content):
 def get_script_name(script_path):
     return os.path.basename(script_path).replace(".py", "")
 
+def has_function(script_path):
+    functions = get_functions_in_script(get_file_content(script_path))
+    
+    if len(functions) == 0:
+        return False
+
+    return True
+
 def create_script_copy(script_path):
     script_copy_path = script_path.replace('.py', '-dfa-copy.py')
     shutil.copy(script_path, script_copy_path)
     return script_copy_path
+
+def delete_script_copy(script_copy_path):
+    os.remove(script_copy_path)
 
 def create_prov_control_file(script_path):
     directory = os.path.dirname(script_path)
@@ -196,37 +207,73 @@ def get_retrospective_prov(script_name, prov_control_path, functions_names):
             tasks[function_name].add_dataset(task_output)
             tasks[function_name].end()
 
-def run_python_script(script_path):
+def instrument_copy_script_without_function(script_copy_path, script_args):
+    script_content = get_file_content(script_copy_path)
+    script_lines = remove_script_empty_lines(script_content.split('\n'))
+
+    script_name = get_script_name(script_copy_path).replace('-', '_')
+
+    with open(script_copy_path, 'w') as file:
+        file.write(add_dfa_write_prov_control_file_function('    ') + '\n')
+
+        file.write(f'dfa_write_prov_control_file(f\'>>> {script_name} : {script_args} \') \n')
+
+        for i in range(len(script_lines)):
+            file.write(script_lines[i] + '\n')
+
+def run_python_script(script_path, script_args=None):
     try:
-        subprocess.run(["python", script_path])
+        command = ["python", script_path]
+        if script_args:
+            command.extend(script_args)
+        subprocess.run(command)
     except subprocess.CalledProcessError as e:
-        print(f"dfa-tr: An error occurred while running the script: {e}")
+        print(f"An error occurred while running the script: {e}")
         return False
     return True
 
 def main(arguments):
-    script_path = arguments.script
+    script_path = arguments[0]
 
     if is_script_path_valid(script_path):
         if (is_script_python(script_path)):
             script_name = get_script_name(script_path)
 
-            functions_names = get_functions_in_script(get_file_content(script_path))
-
             script_copy_path = create_script_copy(script_path)
+
             prov_control_path = create_prov_control_file(script_path)
 
-            instrument_copy_script(script_copy_path)
+            if (has_function(script_path)):
 
-            run_python_script(script_copy_path)
+                functions_names = get_functions_in_script(get_file_content(script_path))
 
-            get_prospective_prov(script_name, prov_control_path)
+                instrument_copy_script(script_copy_path)
 
-            get_retrospective_prov(script_name, prov_control_path, functions_names)
+                run_python_script(script_copy_path)
 
+                get_prospective_prov(script_name, prov_control_path)
+
+                get_retrospective_prov(script_name, prov_control_path, functions_names)
+
+            else:
+                
+                script_args = ''
+
+                if len(arguments) > 1:
+                    script_args = concatenated_string = "; ".join(f"argument_{i} = {arg}" for i, arg in enumerate(arguments[1:], start=1))
+
+                instrument_copy_script_without_function(script_copy_path, script_args)
+
+                run_python_script(script_copy_path, arguments)
+
+                get_prospective_prov(script_name, prov_control_path)
+
+                get_retrospective_prov(script_name, prov_control_path, [script_name])
+                
+            delete_script_copy(script_copy_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a Python script.")
-    parser.add_argument("script", help="Path to the Python script.")
+    parser.add_argument("args", nargs="*")
     args = parser.parse_args()
-    main(args)
+    main(args.args)
